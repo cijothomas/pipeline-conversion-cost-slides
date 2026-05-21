@@ -1,0 +1,16 @@
+{
+  "name": "pipeline-conversion-cost-slides",
+  "private": true,
+  "scripts": {
+    "slides": "slidev obssummit_slides.md --port 3030 --remote",
+    "build": "slidev build obssummit_slides.md",
+    "export": "slidev export obssummit_slides.md"
+  },
+  "dependencies": {
+    "@slidev/cli": "^52.15.2",
+    "@slidev/theme-default": "^0.25.0"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

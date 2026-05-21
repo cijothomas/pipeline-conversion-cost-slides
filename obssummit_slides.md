@@ -67,41 +67,6 @@ SDK conversion cost is real but small relative to what happens next. **The real 
 
 ---
 
-# Collector-Side Costs: Passthrough Test
-
-What if a collector does **zero processing** — just receives and forwards?
-
-Even then, any OTLP-based collector must decode and re-encode everything:
-
-```
-bytes in
-  → proto.Unmarshal()           [~25% of CPU]
-  → in-memory structs
-  → processors (none)
-  → proto.Marshal()             [~14% of CPU]
-  → bytes out
-```
-
----
-
-# Measured: Passthrough Pipeline CPU
-
-Profiled on a Go-based OTLP passthrough pipeline:
-
-<v-clicks>
-
-- **~25% CPU**: `proto.Unmarshal` (decode)
-- **~11% CPU**: GC (13,000 allocs per 1,000 records)
-- **~14% CPU**: `proto.Marshal` (encode)
-
-</v-clicks>
-
-**~50% of total CPU spent on format conversion alone**
-
-With real processors the conversion **percentage** shrinks, but the **absolute CPU cost** stays the same — you're still paying it on every record, every hop.
-
----
-
 # Introducing OpenTelemetry Arrow
 
 OpenTelemetry is building an end-to-end column-oriented telemetry
@@ -160,35 +125,19 @@ pipeline using Apache Arrow.
 
 ---
 
-# Throughput at Single-Core Saturation
+# Get Involved
 
-At single-core saturation — how far can each protocol push?
+OTel Arrow is **work-in-progress** — not production-ready yet.
 
-<v-click>
+<v-clicks>
 
-**OTLP pass-through:** ~625K logs/sec
+- If you're building a query/processing engine, consider **Arrow as your in-memory representation**
+- If you have a choice of sending OTLP or OTAP, choose the protocol that **costs the least end-to-end**
+- If you are a telemetry backend, **offer OTAP as an alternative to OTLP** to lower your and your user's conversion costs
 
-</v-click>
-<v-click>
+</v-clicks>
 
-**OTAP pass-through:** ~2.64M logs/sec
-
-</v-click>
-<v-click>
-
-**OTLP with processing:** ~360K logs/sec — **throughput drops ~42%**
-
-</v-click>
-<v-click>
-
-**OTAP with processing:** ~2.58M logs/sec — **throughput drops only ~3%**
-
-</v-click>
-<v-click>
-
-**The processing is cheap. The conversion around it is what's expensive.**
-
-</v-click>
+[github.com/open-telemetry/otel-arrow](https://github.com/open-telemetry/otel-arrow) · [CNCF Slack #otel-arrow](https://cloud-native.slack.com/archives/C02JADSFY8Y)
 
 ---
 
@@ -203,22 +152,6 @@ At single-core saturation — how far can each protocol push?
 - OTel Arrow is defining that single currency — from your SDK, through processing pipelines, to your backend
 
 </v-clicks>
-
----
-
-# Get Involved
-
-OTel Arrow is **work-in-progress** — not production-ready yet.
-
-<v-clicks>
-
-- If you're building a query/processing engine, consider **Arrow as your in-memory representation**
-- If you have a choice of sending OTLP or OTAP, choose the protocol that **costs the least end-to-end**
-- If you are a telemetry backend, **offer OTAP as an alternative to OTLP** to lower your and your user's conversion costs
-
-</v-clicks>
-
-[github.com/open-telemetry/otel-arrow](https://github.com/open-telemetry/otel-arrow) · [CNCF Slack #otel-arrow](https://cloud-native.slack.com/archives/C02JADSFY8Y)
 
 ---
 

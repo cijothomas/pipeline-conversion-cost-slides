@@ -72,13 +72,20 @@ SDK conversion cost is real but small relative to what happens next. **The real 
 OpenTelemetry is building an end-to-end column-oriented telemetry
 pipeline using Apache Arrow.
 
+Terms:
+
+- **OTAP**: OpenTelemetry Protocol with Apache Arrow is an efficient 100% compatible OTLP alternative.
+- **Dataflow Engine**: a thread-per-core pipeline engine using OTAP as the in-memory representation.
+
+<br>
+Outline:
+
 <v-clicks>
 
-- **OTAP**: OpenTelemetry Arrow Protocol is an efficient OTLP
-  alternative with 100% compatibility, reduces conversion costs.
-- **Dataflow Engine**: a thread-per-core pipeline engine using
-  OTAP as the in-memory representation.
-
+- Data conversion is a major contributor to total pipeline cost
+- Two conversions per collector hop, can't change that, can change protocol
+- OpenTelemetry Protocol with Apache Arrow designed to lower conversion costs
+- Column-oriented data exchange and column-oriented data processing with Apache Arrow.
 </v-clicks>
 
 [github.com/open-telemetry/otel-arrow](https://github.com/open-telemetry/otel-arrow)

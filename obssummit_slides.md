@@ -16,6 +16,21 @@ presenter: true
 
 ---
 
+# Speakers
+
+**Joshua MacDonald** · Microsoft
+
+- OpenTelemetry Technical Committee member
+- Maintainer, OTel Arrow
+- Approver, OTel Collector
+
+**Cijo Thomas** · Microsoft
+
+- Maintainer, OTel Rust
+- Approver - OTel Specification, OTel .NET and OTel Arrow
+
+---
+
 # A Tale of Currencies & Conversion Fees
 
 <v-clicks>

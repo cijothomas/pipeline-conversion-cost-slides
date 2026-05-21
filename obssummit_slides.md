@@ -182,4 +182,5 @@ OTel Arrow is **work-in-progress** — not production-ready yet.
 **Cijo Thomas** · [@cijothomas](https://github.com/cijothomas) · Microsoft  
 **Joshua MacDonald** · [@jmacd](https://github.com/jmacd) · Microsoft
 
-[OTel Arrow](https://github.com/open-telemetry/otel-arrow)
+[github.com/open-telemetry/otel-arrow](https://github.com/open-telemetry/otel-arrow)  
+[CNCF Slack #otel-arrow](https://cloud-native.slack.com/archives/C02JADSFY8Y)

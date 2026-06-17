@@ -28,22 +28,21 @@ presenter: true
 
 > *Anything between the moment a telemetry signal is produced and the moment it lands in a queryable state in some backend — that's the pipeline.*
 
-Pipelines do real, useful work in that middle:
+Pipelines do real, useful work between the app and the backend:
 
 <v-clicks>
 
+- **Transport**
+- **Batch & compress**
+- **Filter & sample**
 - **Enrich**
 - **Redact**
-- **Filter & sample**
 - **Route**
-- **Batch & compress**
 - **Transform**
 
 </v-clicks>
 
 <v-click>
-
-Most of these are **simple per-attribute operations** applied across a batch.
 
 Let's pick the simplest one — **renaming an attribute** — and see what it actually costs.
 
@@ -53,17 +52,57 @@ Let's pick the simplest one — **renaming an attribute** — and see what it ac
 
 # Renaming an Attribute Should Be Cheap
 
-Measured on a realistic `LogRecord` shape ([bench/rename](./bench/rename/benches/rename.rs)):
+<div grid="~ cols-2 gap-4" class="mt-2">
 
-<v-clicks>
+<div>
 
-| Where | Cost per record | Records / sec / core |
-|---|---:|---:|
-| **Top-level field on a record** | ~2.6 ns | ~385 M |
-| **An attribute inside a record** | ~30 ns | ~33 M |
-| **Across a batch of 512 records** | ~35 ns | ~29 M |
+**before**
 
-</v-clicks>
+```rust
+LogRecord {
+  name: "user.login.attempt",
+  severity_num: 9,
+  attributes: [
+    ("http.status_code", "200"),
+    ("user.id", "u-12345"),
+    ("exception.type",
+     "java.io.IOException"),
+  ],
+}
+```
+
+</div>
+
+<div>
+
+<v-click>
+
+**after**
+
+```rust
+LogRecord {
+  name: "user.login.attempt",
+  severity_num: 9,
+  attributes: [
+    ("http.status_code", "200"),
+    ("user.id", "u-12345"),
+    ("exception.kind",  // ← renamed
+     "java.io.IOException"),
+  ],
+}
+```
+
+</v-click>
+
+</div>
+
+</div>
+
+<v-click>
+
+This rename takes **~30 ns** per record. A single CPU core, in a tight loop, can do **~30 million per second**.
+
+</v-click>
 
 <v-click>
 
@@ -73,7 +112,7 @@ So the actual rename cost is **negligible**.
 
 <v-click>
 
-…then why does the same workload at just **200K logs/s** saturate a core in a real pipeline?
+…but anyone who has run a real telemetry pipeline knows a single core gets nowhere close to that.
 
 </v-click>
 
@@ -81,13 +120,13 @@ So the actual rename cost is **negligible**.
 
 # So Why Do Real Pipelines Burn So Much CPU?
 
-<v-clicks>
+Some cost is unavoidable — real pipelines move bytes over the network and talk gRPC/HTTP. **We're not counting that.**
 
-- The work the pipeline *says* it's doing — rename one attribute — costs almost nothing.
-- Yet at modest log rates (100–200K logs/s), that one rule can dominate CPU.
-- So where is all that CPU actually going?
+<v-click>
 
-</v-clicks>
+So where is the *rest* of the CPU going?
+
+</v-click>
 
 ---
 
@@ -116,11 +155,9 @@ No transforms. No business logic. Just forward the bytes.
 
 <v-click>
 
-The pipeline keeps OTLP's row-oriented shape **internally**, so this conversion is mandatory at every hop. **Most of the CPU is gone before any processing happens.**
+The pipeline keeps OTLP's row-oriented shape **internally**, so this conversion is mandatory at every hop.
 
-In a local passthrough run, **~6% of CPU goes to protobuf decode**, and another **~15% to the allocations and GC** those decodes cause. So **~20% of CPU is paid before any processing happens** — purely on shape conversion.
-
-_(Exact share depends on rate, payload, and what else the pipeline is doing. The point: it's never zero.)_
+Depending on the workload, a good chunk of CPU goes into conversion and the allocation/GC churn it causes — and that's the cost you pay **before any useful processing happens**.
 
 </v-click>
 
@@ -128,32 +165,61 @@ _(Exact share depends on rate, payload, and what else the pipeline is doing. The
 
 # Now Add One Transform
 
-One rename rule: `exception.type → exception.kind`. Each new rule **stacks** on top.
+OK — that was before any processing. Let's add some.
+
+One rename rule: `exception.type → exception.kind`.
 
 <v-click>
 
-Local sweep, unbounded OTLP load, single CPU core:
+Each new rule **stacks** on the same per-row, allocation-heavy path. Throughput drops; CPU climbs.
 
-| Rename ops | Throughput (logs/s) | SUT CPU |
-|---:|---:|---:|
-| **0** (passthrough) | **421K** | 54% |
-| 1 | 342K | 71% |
-| 2 | 289K | 77% |
-| **4** | **213K** | 85% |
+</v-click>
+
+<!--
+Speaker note: I've got the numbers — we'll see them in a few slides, after we look
+at what's actually happening structurally.
+-->
+
+---
+
+# It's Not Just the Collector — SDKs Pay It Too
+
+Most SDK exporters do the same shape conversion:
+
+`SDK record → protobuf struct → byte[]`
+
+Two conversions per record, on every host emitting telemetry.
+
+<v-click>
+
+Measured cost per log record:
+
+| SDK | Conv 1 (SDK → struct) | Conv 2 (struct → bytes) | **Total** |
+|---|---:|---:|---:|
+| **Rust** | 395 ns | 114 ns | **~510 ns** |
+| **Go** | 281 ns | 598 ns | **~887 ns** |
+| **.NET** (skips Conv 1) | — | — | **~194 ns** |
 
 </v-click>
 
 <v-click>
 
-Four trivial renames → **throughput drops ~50%**.
+Sub-microsecond per record — small per-event, but it's in **every** application emitting telemetry, on every host, all the time.
 
-The first rule sits on top of an expensive decode/encode; every additional one stacks on the same per-row, allocation-heavy path.
+</v-click>
+
+<v-click>
+
+The pipeline's tax is the dramatic one. **The SDK pays a quieter version of the same tax.**
+This is a system-wide problem, not a collector problem.
 
 </v-click>
 
 ---
 
-# Three Things Are Going On
+# What's Actually Going On — In Both Cases?
+
+Whether it's the Collector or an SDK exporter, the cost has the same three shapes:
 
 <v-clicks>
 
@@ -169,33 +235,10 @@ What if the in-memory representation made all three of these go away?
 
 </v-click>
 
----
-
-# It's Not Just the Collector — SDKs Pay It Too
-
-Same cost model, smaller scale. Every SDK exporter does:
-`SDK type → protobuf struct → byte[]`
-
-Per log record:
-
-| SDK | Total |
-|---|---:|
-| **.NET** (skips the struct hop) | ~194 ns |
-| **Rust** | ~510 ns |
-| **Go** | ~887 ns |
-
-<v-click>
-
-Sub-microsecond per record — small per-event, but it's there in **every** application emitting telemetry, on every host, all the time.
-
-</v-click>
-
-<v-click>
-
-The pipeline's tax is the dramatic one. **The SDK pays a quieter version of the same tax.**
-This is a system-wide problem, not a collector problem.
-
-</v-click>
+<!--
+Speaker note: Hold on to these three — we'll come back to them when we compare
+against Arrow.
+-->
 
 ---
 
@@ -256,11 +299,36 @@ The combination is what kills all three costs at once: no conversion at the boun
 
 <img src="./obssummit_assets/otlp-bytes.svg" class="h-96 mx-auto" />
 
+<!--
+Speaker notes:
+- Here's what one OTLP batch actually looks like on the wire: a packed protobuf
+  message — every record's resource, scope, attributes, body, all nested and
+  length-prefixed.
+- Compact and well-specified, but completely opaque until you decode it. You
+  can't read, rename, or filter anything until you've parsed every length prefix
+  and materialized the full nested object tree in memory.
+- And every time it crosses a process boundary, the receiver decodes and the
+  sender re-encodes. That's the tax we just measured.
+-->
+
 ---
 
 # OTAP: OpenTelemetry Protocol with Apache Arrow
 
 <img src="./obssummit_assets/otap-tables.svg" class="h-96 mx-auto" />
+
+<!--
+Speaker notes:
+- Same telemetry, restructured. Instead of one packed byte tape, OTAP arranges
+  it as a few columnar tables: one for logs, one for attributes, plus the
+  relationships between them.
+- The wire bytes here are Arrow IPC — but unlike protobuf, the wire layout is
+  the same shape as the in-memory layout. The receiver doesn't have to walk
+  every record to extract values; the column buffer is already there.
+- And it's batch-oriented: a million records share one column. That's why
+  filters, renames, and other bulk ops can run as column operations instead of
+  a per-record walk.
+-->
 
 ---
 
@@ -275,6 +343,21 @@ The combination is what kills all three costs at once: no conversion at the boun
 - No per-record allocation. No GC churn.
 
 </v-clicks>
+
+<!--
+Speaker notes:
+- Left side: an OTLP pipeline. Every time bytes arrive, unmarshal — heap-
+  allocate the full object graph. To send: marshal back to bytes. Every hop
+  pays both.
+- Right side: an OTAP pipeline. Wire bytes parse straight into Arrow column
+  buffers — and out the same way. No per-record decode, no per-record
+  allocation.
+- Same source data, same destination, but one path pays the conversion tax
+  twice per hop and the other pays it zero times.
+- (Honesty caveat if asked: "zero copy" is slightly aspirational — there's a
+  small Flatbuffers metadata parse per batch, but no per-record work.)
+-->
+
 
 ---
 
@@ -304,6 +387,10 @@ _(The OTAP run is load-generator-limited — real ceiling is higher.)_
 # Each Rule Costs the Collector. DFE Barely Notices.
 
 Same workload — rename rules added one at a time:
+
+<!--
+Speaker note: Here's the data I promised earlier.
+-->
 
 <v-click>
 

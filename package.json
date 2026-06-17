@@ -4,7 +4,10 @@
   "scripts": {
     "slides": "slidev obssummit_slides.md --port 3030 --remote",
     "build": "slidev build obssummit_slides.md",
-    "export": "slidev export obssummit_slides.md"
+    "export": "slidev export obssummit_slides.md",
+    "slides:kubecon": "slidev kubecon_india_slides.md --port 3031 --remote",
+    "build:kubecon": "slidev build kubecon_india_slides.md",
+    "export:kubecon": "slidev export kubecon_india_slides.md"
   },
   "dependencies": {
     "@slidev/cli": "^52.15.2",
@@ -12,5 +15,8 @@
   },
   "engines": {
     "node": ">=20.19.0"
+  },
+  "devDependencies": {
+    "playwright-chromium": "^1.60.0"
   }
 }

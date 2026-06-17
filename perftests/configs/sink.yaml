@@ -1,0 +1,38 @@
+# Sink: receives whatever the SUT sends and drops it.
+# Different ports than SUT so they can both run on the same host.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13134
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:5317
+      http:
+        endpoint: 0.0.0.0:5318
+
+processors: {}
+
+exporters:
+  nop: {}   # drops everything; minimal CPU
+
+service:
+  extensions: [health_check]
+  telemetry:
+    metrics:
+      level: none
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: []
+      exporters: [nop]
+    traces:
+      receivers: [otlp]
+      processors: []
+      exporters: [nop]
+    metrics:
+      receivers: [otlp]
+      processors: []
+      exporters: [nop]

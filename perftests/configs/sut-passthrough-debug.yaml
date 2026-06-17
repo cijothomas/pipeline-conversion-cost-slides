@@ -1,0 +1,44 @@
+# SUT: OTLP-in / OTLP-out passthrough. No processors.
+# Pprof endpoint on :1777 so we can capture CPU profiles while load is running.
+
+extensions:
+  pprof:
+    endpoint: 0.0.0.0:1777
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors: {}   # passthrough — measure pure conversion cost
+
+exporters:
+  # Sends to sink collector. otlphttp so the SUT pays a real proto encode
+  # (using a non-debug exporter is the critical fix vs the Mar 1 profile).
+  debug:
+    verbosity: basic
+    # Disable retries and queueing so we measure steady-state, not buffering.
+
+service:
+  extensions: [pprof, health_check]
+  telemetry:
+    metrics:
+      level: none   # don't pollute the profile with self-metrics
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: []
+      exporters: [debug]
+    traces:
+      receivers: [otlp]
+      processors: []
+      exporters: [debug]
+    metrics:
+      receivers: [otlp]
+      processors: []
+      exporters: [debug]

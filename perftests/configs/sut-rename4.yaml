@@ -1,0 +1,57 @@
+# SUT: OTLP-in / OTLP-out + 4 rename rules
+
+extensions:
+  pprof:
+    endpoint: 0.0.0.0:1777
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  transform/rename4:
+    log_statements:
+      - context: log
+        statements:
+          - set(attributes["exception.kind"], attributes["exception.type"]) where attributes["exception.type"] != nil
+          - delete_key(attributes, "exception.type") where attributes["exception.kind"] != nil
+          - set(attributes["http.request.method"], attributes["http.method"]) where attributes["http.method"] != nil
+          - delete_key(attributes, "http.method") where attributes["http.request.method"] != nil
+          - set(attributes["http.response.status_code"], attributes["http.status_code"]) where attributes["http.status_code"] != nil
+          - delete_key(attributes, "http.status_code") where attributes["http.response.status_code"] != nil
+          - set(attributes["url.path"], attributes["http.route"]) where attributes["http.route"] != nil
+          - delete_key(attributes, "http.route") where attributes["url.path"] != nil
+
+exporters:
+  otlphttp:
+    endpoint: http://localhost:5318
+    retry_on_failure:
+      enabled: false
+    sending_queue:
+      enabled: false
+    compression: none
+
+service:
+  extensions: [pprof, health_check]
+  telemetry:
+    metrics:
+      level: none
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [transform/rename4]
+      exporters: [otlphttp]
+    traces:
+      receivers: [otlp]
+      processors: []
+      exporters: [otlphttp]
+    metrics:
+      receivers: [otlp]
+      processors: []
+      exporters: [otlphttp]

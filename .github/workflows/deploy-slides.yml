@@ -27,8 +27,13 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build Slidev
+      # Obs Summit deck stays at the root so existing links keep working.
+      - name: Build Slidev — Obs Summit
         run: npx slidev build obssummit_slides.md --base /pipeline-conversion-cost-slides/ --out dist
+
+      # KubeCon India deck lives under /kubecon/.
+      - name: Build Slidev — KubeCon India
+        run: npx slidev build kubecon_india_slides.md --base /pipeline-conversion-cost-slides/kubecon/ --out dist/kubecon
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

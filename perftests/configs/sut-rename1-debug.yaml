@@ -1,0 +1,46 @@
+# SUT: OTLP-in / OTLP-out + 1 rename rule (exception.type -> exception.kind)
+
+extensions:
+  pprof:
+    endpoint: 0.0.0.0:1777
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  transform/rename1:
+    log_statements:
+      - context: log
+        statements:
+          - set(attributes["exception.kind"], attributes["exception.type"]) where attributes["exception.type"] != nil
+          - delete_key(attributes, "exception.type") where attributes["exception.kind"] != nil
+
+exporters:
+  debug:
+    verbosity: basic
+
+service:
+  extensions: [pprof, health_check]
+  telemetry:
+    metrics:
+      level: none
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [transform/rename1]
+      exporters: [debug]
+    traces:
+      receivers: [otlp]
+      processors: []
+      exporters: [debug]
+    metrics:
+      receivers: [otlp]
+      processors: []
+      exporters: [debug]

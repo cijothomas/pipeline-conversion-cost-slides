@@ -242,19 +242,15 @@ _.NET emits the protobuf struct directly from the SDK — proof that Conv 1 is a
 
 # This Is a Structural Problem
 
-Whether it's the Collector or an OTel SDK, the cost has the same three shapes:
-
-<v-clicks>
-
-1. **Conversion at every hop**
-2. **GC pressure** — every batch allocates objects, every batch becomes garbage.
-3. **Per-row work** — processors walk every record in the batch, one at a time.
-
-</v-clicks>
+The Collector and the OTel SDK pay the same three costs — **conversion at every hop**, **GC churn from per-batch allocations**, and **per-row processing**.
 
 <v-click>
 
-The root cause: **every OTel component picks its own in-memory representation** — SDK types, Go pdata, backend ingestion schemas. So conversion happens **at every boundary** — not because anyone designed it that way, but because nobody agreed on a shared shape.
+The root cause: **every component picks its own in-memory shape**. So conversion happens **at every boundary** — not by design, but by accident.
+
+</v-click>
+
+<v-click>
 
 The wire format (OTLP protobuf) is *only* a wire format. It's nobody's in-memory home.
 

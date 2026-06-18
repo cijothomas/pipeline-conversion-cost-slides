@@ -174,30 +174,19 @@ For every batch the pipeline receives:
 
 <v-click>
 
-<img src="./obssummit_assets/otlp-bytes.svg" class="h-48 mx-auto my-2" />
-
-_Bytes look like this — opaque until decoded._
+Even with **zero processors** — pure passthrough — decode + re-encode + GC churn still happens on every batch, every hop.
 
 </v-click>
 
 <v-click>
 
-Even with **zero processors** in the middle — pure passthrough — the decode + re-encode + GC churn still happens on every batch, every hop.
+Add a rename rule: `exception.type → exception.kind`. Throughput drops further. CPU climbs.
 
 </v-click>
 
 <v-click>
 
-Now add a rename rule: `exception.type → exception.kind`.
-Throughput drops further. CPU climbs.
-
-</v-click>
-
-<v-click>
-
-Conversion happens **once per batch** — adding rules doesn't add more conversions.
-
-So why does **each rule** cost so much? The **in-memory shape itself** is expensive to walk.
+Conversion happens **once per batch** — so extra CPU per rule isn't conversion. The **in-memory shape itself** is expensive to walk.
 
 </v-click>
 
@@ -213,6 +202,18 @@ Speaker notes:
   the in-memory representation that forces per-row work.
 - Numbers — both passthrough cost and per-rule cost — come later in the talk.
 -->
+
+---
+
+# What the Bytes Look Like
+
+<img src="./obssummit_assets/otlp-bytes.svg" class="h-80 mx-auto" />
+
+<div class="text-center text-sm opacity-75 mt-2">
+
+_Opaque protobuf — every hop has to decode this before it can do anything._
+
+</div>
 
 ---
 

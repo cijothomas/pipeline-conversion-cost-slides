@@ -19,8 +19,27 @@ presenter: true
 
 **Cijo Thomas** · Microsoft
 
-- Maintainer, OTel Rust
-- Approver — OTel Specification, OTel .NET and OTel Arrow
+Works across **multiple areas of OpenTelemetry** — language implementations (Rust, .NET), Specification, and OTel Arrow.
+
+On the team behind Microsoft's **planetary-scale telemetry pipelines**.
+
+---
+
+# Why Talk About Pipelines?
+
+Telemetry volume keeps growing. The industry has fought back hard on **storage** (tiered, columnar) and on **what gets ingested** (sampling, filtering, drop rules).
+
+<v-click>
+
+The pipeline itself — the path between the app and the backend — gets far less attention.
+
+</v-click>
+
+<v-click>
+
+That's what this talk is about.
+
+</v-click>
 
 ---
 
@@ -126,56 +145,52 @@ A collector with **nothing in the middle** — OTLP in, OTLP out, zero processor
 
 <v-click>
 
-No transforms. No business logic. Just forward the bytes.
 **This should be blazing fast.**
 
 </v-click>
 
 <v-click>
 
-…except it isn't. For every batch the pipeline still has to:
+…except it isn't. For every batch:
 
 - **Decode** protobuf bytes → allocate a full object graph
-  (resource → scope → records → attributes — one object per field)
 - …do nothing in the middle…
-- **Re-encode** the object graph back to bytes
-- Throw away every allocated object — GC and allocator churn
+- **Re-encode** back to bytes — and throw it all away
 
 </v-click>
 
 <v-click>
 
-The pipeline keeps OTLP's row-oriented shape **internally**, so this conversion is mandatory at every hop.
-
-Depending on the workload, a good chunk of CPU goes into conversion and the allocation/GC churn it causes — and that's the cost you pay **before any useful processing happens**.
+Now add a rename rule: `exception.type → exception.kind`.
+Throughput drops further. CPU climbs.
 
 </v-click>
+
+<v-click>
+
+Conversion only happens once per batch — adding rules doesn't add more conversions.
+So why does **each rule** cost so much? The **in-memory shape itself** is expensive to walk.
+
+</v-click>
+
+<!--
+Speaker notes:
+- Passthrough first: decode + encode + GC churn = a good chunk of CPU before
+  any work is done. ~15-30% depending on workload — say verbally if asked.
+- Then add the rule. The key insight: the bytes were already decoded once and
+  will be encoded once regardless. So the extra CPU per rule isn't conversion —
+  it's the cost of walking the in-memory object graph row by row.
+- This sets up the "structural problem" slides: it's not just the wire format,
+  it's the in-memory representation that forces per-row work.
+- We'll see actual numbers — both for passthrough cost and per-rule cost —
+  later in the talk.
+-->
 
 ---
 
-# Now Add One Transform
+# Your Application Pays This Too
 
-OK — that was before any processing. Let's add some.
-
-One rename rule: `exception.type → exception.kind`.
-
-<v-click>
-
-Each new rule **stacks** on the same per-row, allocation-heavy path. Throughput drops; CPU climbs.
-
-</v-click>
-
-<v-click>
-
-We'll measure how much in a few slides — once we've seen *why* it stacks.
-
-</v-click>
-
----
-
-# It's Not Just the Collector — SDKs Pay It Too
-
-Most SDK exporters do the same shape conversion:
+Anything emitting telemetry — through any OTel SDK — runs the same shape conversion before bytes leave the process:
 
 `SDK record → protobuf struct → byte[]`
 
@@ -185,26 +200,13 @@ Two conversions per record, on every host emitting telemetry.
 
 Measured cost per log record:
 
-| SDK | Conv 1 (SDK → struct) | Conv 2 (struct → bytes) | **Total** |
-|---|---:|---:|---:|
-| **Rust** | 395 ns | 114 ns | **~510 ns** |
-| **Go** | 281 ns | 598 ns | **~887 ns** |
-| **.NET** (skips Conv 1) | — | — | **~194 ns** |
+| SDK | Conv 1 (SDK → struct) | Conv 2 (struct → bytes) | % in Conv 1 | **Total** |
+|---|---:|---:|---:|---:|
+| **Rust** | 395 ns | 114 ns | **~77%** | **~510 ns** |
+| **Go** | 281 ns | 598 ns | **~32%** | **~887 ns** |
+| **.NET** (skips Conv 1) | — | — | **0%** | **~194 ns** |
 
 _.NET emits the protobuf struct directly from the SDK — proof that Conv 1 is avoidable, not free._
-
-</v-click>
-
-<v-click>
-
-Sub-microsecond per record — small per-event, but it's in **every** application emitting telemetry, on every host, all the time.
-
-</v-click>
-
-<v-click>
-
-The pipeline's tax is the dramatic one. **The SDK pays a quieter version of the same tax.**
-This is a system-wide problem, not a collector problem.
 
 </v-click>
 
@@ -212,13 +214,13 @@ This is a system-wide problem, not a collector problem.
 
 # What's Actually Going On — In Both Cases?
 
-Whether it's the Collector or an SDK exporter, the cost has the same three shapes:
+Whether it's the Collector or an OTel SDK, the cost has the same three shapes:
 
 <v-clicks>
 
-1. **Conversion at every hop** — protobuf bytes → object graph → bytes. Mandatory, regardless of what happens in between.
-2. **GC pressure** — every batch allocates resource / scope / record / attribute objects. Every batch becomes garbage. Allocator and collector burn CPU.
-3. **Per-row work** — to rename one attribute, the processor walks every record in the batch, one at a time.
+1. **Conversion at every hop**
+2. **GC pressure** — every batch allocates objects, every batch becomes garbage.
+3. **Per-row work** — processors walk every record in the batch, one at a time.
 
 </v-clicks>
 
@@ -229,8 +231,13 @@ What if the in-memory representation made all three of these go away?
 </v-click>
 
 <!--
-Speaker note: Hold on to these three — we'll come back to them when we compare
-against Arrow.
+Speaker notes:
+- Conversion: protobuf bytes → object graph → bytes. Mandatory regardless of
+  what happens in between. Already shown.
+- GC pressure: resource / scope / record / attribute objects allocated per
+  batch, allocator + GC burn CPU.
+- Per-row: rename one attribute = walk every record in the batch.
+- Hold on to these three — we'll come back to them when we compare against Arrow.
 -->
 
 ---
@@ -276,11 +283,11 @@ So we need an **in-memory representation** that:
 
 - **Apache Arrow** — a columnar, batch-oriented in-memory format. Same layout on the wire and in memory.
 - **OTAP** — *OpenTelemetry Protocol with Apache Arrow*. A 100%-compatible OTLP alternative that carries telemetry as Arrow record batches.
-- **Dataflow Engine (DFE)** — a thread-per-core Rust runtime that uses **OTAP as its in-memory representation**, so processors operate directly on Arrow batches.
+- **Dataflow Engine (DFE)** — a new collector runtime that uses **OTAP as its in-memory representation**, so processors operate directly on Arrow batches.
 
 <v-click>
 
-The combination is what kills all three costs at once: no conversion at the boundary, no per-record allocation, and bulk ops vectorize across columns.
+Together: **no conversion at boundaries. No per-record allocation. Columns, not rows.**
 
 </v-click>
 
@@ -300,14 +307,15 @@ _Nested protobuf — opaque until decoded, walked one record at a time._
 
 <!--
 Speaker notes:
-- Here's what one OTLP batch actually looks like on the wire: a packed protobuf
-  message — every record's resource, scope, attributes, body, all nested and
-  length-prefixed.
-- Compact and well-specified, but completely opaque until you decode it. You
-  can't read, rename, or filter anything until you've parsed every length prefix
-  and materialized the full nested object tree in memory.
-- And every time it crosses a process boundary, the receiver decodes and the
-  sender re-encodes. That's the tax we just measured.
+- This is what one OTLP batch looks like on the wire: a packed protobuf tape.
+- To do anything with it — read, filter, rename — the receiver must
+  unmarshal/decode the entire tape first. Heap-allocate every resource, scope,
+  record, attribute object.
+- And once decoded, look at how the data lives: each attribute is its own
+  object, scattered across the heap. To rename one attribute, the processor
+  chases pointers through that scattered graph, record by record.
+- Cache-unfriendly on read. Allocator-heavy on receive. GC-heavy on release.
+- Every process boundary: receiver decodes, sender re-encodes. That's the tax.
 -->
 
 ---
@@ -370,97 +378,117 @@ Speaker notes:
 
 Both rows are the **same DFE**, on the **same cores**. Only the wire format differs:
 
+<table class="mt-4">
+<thead>
+<tr><th class="text-left">Wire protocol</th><th class="text-right">Throughput @ 1 core</th></tr>
+</thead>
+<tbody>
 <v-click>
-
-| Wire protocol | Throughput @ 1 core |
-|---|---:|
-| **OTLP** in/out (decode + convert at the boundary) | 121K logs/s |
-| **OTAP** in/out (Arrow end to end) | **2.47M logs/s — ~20×** |
-
+<tr><td><strong>OTLP</strong> in/out (decode + convert at the boundary)</td><td class="text-right">121K logs/s</td></tr>
 </v-click>
-
 <v-click>
-
-Isolating just the wire protocol: avoiding boundary conversion is worth **~20×**.
-
+<tr><td><strong>OTAP</strong> in/out (Arrow end to end)</td><td class="text-right"><strong>2.47M logs/s — ~20×</strong></td></tr>
 </v-click>
+</tbody>
+</table>
 
 _(The OTAP run is load-generator-limited — real ceiling is higher.)_
 
----
-
-# Each Rule Costs the Collector. DFE Barely Notices.
-
-Same workload — rename rules added one at a time. Watch the **per-added-op** row:
-
-<v-click>
-
-| Rename ops | OTel Collector (OTLP) | DFE (OTAP) |
-|---:|---:|---:|
-| 1 | ~81% CPU | **6.4%** CPU |
-| 4 | ~92.5% CPU | **6.6%** CPU |
-| **per added op** | **+3.75%** | **~+0.07%** |
-
-</v-click>
-
-<v-click>
-
-Each rule on the Collector pays the **per-row, allocation-heavy tax**.
-DFE operates on **columns** — adding rules is nearly free.
-
-</v-click>
-
-_(200K logs/s, ~300 B/log. DFE absolute baseline is ~6% at this load; the story is the per-rule delta.)_
-
 <!--
-Speaker note: Here's the data I promised earlier. Don't get hung up on Collector
-starting at 81% vs DFE at 6% — different runtimes, different absolute baselines.
-The honest comparison is the bottom row: each added rule costs the Collector
-~3.75% and DFE essentially nothing.
+Speaker note: Land the "~20× from protocol alone" verbally after the OTAP row
+reveals. Don't put it on the slide — the number speaks for itself.
 -->
 
 ---
 
-# Imagine: Telemetry Born in Arrow
+# Why Arrow: Batch Operations Are Nearly Free
+
+Arrow was designed for **bulk operations over columns**. Renames are exactly that.
+
+Same workload — rename rules added one at a time. **CPU added per rule:**
+
+<v-click>
+
+| Rules added | OTel Collector (OTLP) | DFE (OTAP) |
+|---:|---:|---:|
+| +1 | **+3.75%** | **+0.07%** |
+| +2 | **+7.5%** | **+0.14%** |
+| +3 | **+11.25%** | **+0.21%** |
+
+</v-click>
+
+<v-click>
+
+OTLP representation walks each record — every rule stacks per-row work.
+OTAP operates in columns — adding rules is essentially free.
+
+</v-click>
+
+<!--
+Speaker note: This is the second reason Arrow was picked — not just no
+conversion at the boundary, but the in-memory representation itself enables
+batch ops. Adding more transforms is nearly free because the work is column
+operations, not record walks.
+- Numbers are from the Phase 2 blog measurements: Collector +3.75% per rule,
+  DFE ~+0.07% per rule. Showing as incremental cost makes the point cleanly
+  without the apples-to-oranges absolute baselines (Collector starts much
+  higher than DFE because it pays a big upfront decode cost — irrelevant to
+  the per-rule story).
+-->
+
+---
+
+# Where Phase 2 Leaves Us
+
+Everything you just saw is the result of **OTel Arrow Phase 2**:
+OTAP on the wire, the Dataflow Engine, Arrow-native pipeline processing.
+
+<v-click>
+
+Deep dive: [OTel-Arrow Phase 2 blog](https://opentelemetry.io/blog/2026/otel-arrow-phase-2/)
+
+</v-click>
+
+<v-click>
+
+But we're not done. **Phase 3 starts now.**
+
+</v-click>
+
+<!--
+Speaker note: This is the landing for everything we've shown so far. The
+20× wire result, the per-rule near-zero CPU — all in the Phase 2 blog.
+The blog is the deep dive; the talk is the summary.
+- Phase 3 is the next chapter. The deck shows one specific direction we care
+  about — Arrow at the source — but it's not the only thing happening.
+- Read out the URL or point to it; audience can hit the slide deck later.
+-->
+
+---
+
+# Phase 3: Telemetry Born in Arrow
+
+Phase 3 covers a lot of work. A few directions in scope:
 
 <v-clicks>
 
 - SDKs emit Arrow batches directly — no protobuf step at the app
 - Pipelines stay in Arrow end to end — no per-hop conversion
 - Backends ingest Arrow — many analytics engines already speak it natively
+- **Pluggable components** — run existing collector-contrib components on the new engine
 
 </v-clicks>
 
 <v-click>
 
 One representation, from source through every hop to query.
-No tax. No GC churn. No translation between hops.
-
-That's the destination.
+**Telemetry born in Arrow. Live end-to-end in Arrow.**
 
 </v-click>
 
 ---
 
-# Get Involved
-
-OTel Arrow is **work-in-progress** — not production-ready yet.
-
-<v-clicks>
-
-- If you're building a query/processing engine, consider **Arrow as your in-memory representation**
-- If you have a choice of sending OTLP or OTAP, choose the protocol that **costs the least end-to-end**
-- If you are a telemetry backend, **offer OTAP as an alternative to OTLP** to lower your and your user's conversion costs
-
-</v-clicks>
-
-[github.com/open-telemetry/otel-arrow](https://github.com/open-telemetry/otel-arrow) · [CNCF Slack #otel-arrow](https://cloud-native.slack.com/archives/C02JADSFY8Y)
-
-Deep dive: [OTel-Arrow Phase 2 blog](https://opentelemetry.io/blog/2026/otel-arrow-phase-2/)
-
----
-
-# Where We Are
+# Takeaways
 
 <v-clicks>
 
@@ -476,6 +504,24 @@ Deep dive: [OTel-Arrow Phase 2 blog](https://opentelemetry.io/blog/2026/otel-arr
 _Like a currency conversion fee: invisible per transaction, painful at scale — and worth removing._
 
 </v-click>
+
+---
+
+# Get Involved
+
+OTel Arrow is **work-in-progress** — early enough that your input shapes it.
+
+<v-clicks>
+
+- **Telemetry backends**: consider adopting **OTAP as your native ingestion format**. It's early — you can help shape it before the patterns harden.
+- **Pipeline operators**: try the **OTAP path / Dataflow Engine** in a non-production setup and share feedback — real-world workloads are exactly what the project needs.
+- **Pipeline & engine builders**: try **Arrow as your in-memory representation**.
+- **Everyone else**: join the community — issues, design discussions, benchmarks all welcome.
+
+</v-clicks>
+
+- [github.com/open-telemetry/otel-arrow](https://github.com/open-telemetry/otel-arrow)
+- [CNCF Slack #otel-arrow](https://cloud-native.slack.com/archives/C02JADSFY8Y)
 
 ---
 

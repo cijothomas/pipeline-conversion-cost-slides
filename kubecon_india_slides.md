@@ -92,7 +92,7 @@ out of nowhere.
 
 ---
 
-# How Cheap Is the Simplest Operation?
+# How Cheap Is the Simplest Rename Operation?
 
 <div grid="~ cols-2 gap-4" class="mt-2">
 
@@ -174,6 +174,14 @@ For every batch the pipeline receives:
 
 <v-click>
 
+<img src="./obssummit_assets/otlp-bytes.svg" class="h-48 mx-auto my-2" />
+
+_Bytes look like this — opaque until decoded._
+
+</v-click>
+
+<v-click>
+
 Even with **zero processors** in the middle — pure passthrough — the decode + re-encode + GC churn still happens on every batch, every hop.
 
 </v-click>
@@ -232,7 +240,7 @@ _.NET emits the protobuf struct directly from the SDK — proof that Conv 1 is a
 
 ---
 
-# What's Actually Going On — In Both Cases?
+# This Is a Structural Problem
 
 Whether it's the Collector or an OTel SDK, the cost has the same three shapes:
 
@@ -244,37 +252,23 @@ Whether it's the Collector or an OTel SDK, the cost has the same three shapes:
 
 </v-clicks>
 
-<!--
-Speaker notes:
-- Conversion: protobuf bytes → object graph → bytes. Mandatory regardless of
-  what happens in between. Already shown.
-- GC pressure: resource / scope / record / attribute objects allocated per
-  batch, allocator + GC burn CPU.
-- Per-row: rename one attribute = walk every record in the batch.
-- Hold on to these three — we'll come back to them when we compare against Arrow.
--->
-
----
-
-# This Is a Structural Problem
-
-Every OTel component has its own native in-memory representation:
-
-<v-clicks>
-
-- SDKs have SDK types
-- The Collector has Go pdata
-- Backends have their own ingestion schema
-
-</v-clicks>
-
 <v-click>
 
-So conversion happens **at every boundary** — not because anyone designed it that way, but because nobody agreed on a shared shape.
+The root cause: **every OTel component picks its own in-memory representation** — SDK types, Go pdata, backend ingestion schemas. So conversion happens **at every boundary** — not because anyone designed it that way, but because nobody agreed on a shared shape.
 
 The wire format (OTLP protobuf) is *only* a wire format. It's nobody's in-memory home.
 
 </v-click>
+
+<!--
+Speaker notes:
+- The three shapes (conversion / GC / per-row) are symptoms. They all trace
+  back to the same cause: no shared in-memory representation.
+- Conversion: protobuf bytes → object graph → bytes. Mandatory at every hop.
+- GC pressure: resource/scope/record/attribute objects allocated per batch.
+- Per-row: rename one attribute = walk every record in the batch.
+- Hold on to these three — we come back to them when comparing against Arrow.
+-->
 
 ---
 

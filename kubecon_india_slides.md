@@ -61,15 +61,38 @@ Pipelines do real, useful work between the app and the backend:
 
 </v-clicks>
 
+---
+
+# Pipelines Cost CPU. A Lot of It.
+
+Every one of those operations runs on real CPU — in collectors, in sidecars, in regional aggregators, on every host. (Memory and network too — but CPU is usually the loudest.)
+
 <v-click>
 
-Let's pick the simplest one — **renaming an attribute** — and see what it actually costs.
+At scale, **pipeline CPU adds up fast** — running collectors at every hop, on every host, becomes a real line item in the observability bill.
 
 </v-click>
 
+<v-click>
+
+So it's worth asking: **where does that CPU actually go?**
+
+</v-click>
+
+<!--
+Speaker note: This is the bridge from "what pipelines do" to "what pipelines
+cost". Without this, the next slide feels like it pivots to benchmarking
+out of nowhere.
+- "Comparable to the backend cost" — soft claim, deliberately vague. If
+  pressed: depends heavily on workload and backend, but at multi-host scale
+  the collector tier is non-trivial; we and others have seen it land in the
+  same order of magnitude as ingestion-side costs.
+- Then the natural next move: pick the simplest op, see what it costs.
+-->
+
 ---
 
-# Renaming an Attribute Should Be Cheap
+# How Cheap Is the Simplest Operation?
 
 <div grid="~ cols-2 gap-4" class="mt-2">
 
@@ -137,25 +160,21 @@ So the actual rename cost is **negligible**.
 
 ---
 
-# Start With the Easiest Case: Passthrough
+# What Goes On Inside a Collector?
 
-Some cost is unavoidable — real pipelines move bytes over the network and talk gRPC/HTTP. **We're not counting that.** Where is the *rest* of the CPU going?
-
-A collector with **nothing in the middle** — OTLP in, OTLP out, zero processors.
+For every batch the pipeline receives:
 
 <v-click>
 
-**This should be blazing fast.**
+- **Decode** protobuf bytes → allocate a full object graph
+- Run any configured processors (filter, transform, route…)
+- **Re-encode** back to bytes — and throw the whole object graph away
 
 </v-click>
 
 <v-click>
 
-…except it isn't. For every batch:
-
-- **Decode** protobuf bytes → allocate a full object graph
-- …do nothing in the middle…
-- **Re-encode** back to bytes — and throw it all away
+Even with **zero processors** in the middle — pure passthrough — the decode + re-encode + GC churn still happens on every batch, every hop.
 
 </v-click>
 
@@ -168,22 +187,23 @@ Throughput drops further. CPU climbs.
 
 <v-click>
 
-Conversion only happens once per batch — adding rules doesn't add more conversions.
+Conversion happens **once per batch** — adding rules doesn't add more conversions.
+
 So why does **each rule** cost so much? The **in-memory shape itself** is expensive to walk.
 
 </v-click>
 
 <!--
 Speaker notes:
-- Passthrough first: decode + encode + GC churn = a good chunk of CPU before
-  any work is done. ~15-30% depending on workload — say verbally if asked.
-- Then add the rule. The key insight: the bytes were already decoded once and
-  will be encoded once regardless. So the extra CPU per rule isn't conversion —
+- Opens by describing what a collector actually does on each batch.
+- Then notes: even passthrough (no processors) pays decode + encode + GC churn.
+  ~15-30% of CPU depending on workload — say verbally if asked.
+- Then layer on the rule. The key insight: bytes were already decoded once and
+  will be encoded once regardless. So extra CPU per rule isn't conversion —
   it's the cost of walking the in-memory object graph row by row.
-- This sets up the "structural problem" slides: it's not just the wire format,
-  it's the in-memory representation that forces per-row work.
-- We'll see actual numbers — both for passthrough cost and per-rule cost —
-  later in the talk.
+- Sets up "structural problem" slides: it's not just the wire format, it's
+  the in-memory representation that forces per-row work.
+- Numbers — both passthrough cost and per-rule cost — come later in the talk.
 -->
 
 ---
@@ -223,12 +243,6 @@ Whether it's the Collector or an OTel SDK, the cost has the same three shapes:
 3. **Per-row work** — processors walk every record in the batch, one at a time.
 
 </v-clicks>
-
-<v-click>
-
-What if the in-memory representation made all three of these go away?
-
-</v-click>
 
 <!--
 Speaker notes:
@@ -277,13 +291,23 @@ So we need an **in-memory representation** that:
 
 </v-clicks>
 
+<v-click>
+
+**Good news: OTel is already building on one.**
+
+</v-click>
+
 ---
 
 # Apache Arrow, OTAP, and the Dataflow Engine
 
+<v-clicks>
+
 - **Apache Arrow** — a columnar, batch-oriented in-memory format. Same layout on the wire and in memory.
 - **OTAP** — *OpenTelemetry Protocol with Apache Arrow*. A 100%-compatible OTLP alternative that carries telemetry as Arrow record batches.
 - **Dataflow Engine (DFE)** — a new collector runtime that uses **OTAP as its in-memory representation**, so processors operate directly on Arrow batches.
+
+</v-clicks>
 
 <v-click>
 
@@ -392,11 +416,11 @@ Both rows are the **same DFE**, on the **same cores**. Only the wire format diff
 </tbody>
 </table>
 
-_(The OTAP run is load-generator-limited — real ceiling is higher.)_
-
 <!--
 Speaker note: Land the "~20× from protocol alone" verbally after the OTAP row
 reveals. Don't put it on the slide — the number speaks for itself.
+- Also mention: the OTAP run is load-generator-limited — the real ceiling is
+  higher. Worth saying out loud as honesty.
 -->
 
 ---
@@ -407,15 +431,22 @@ Arrow was designed for **bulk operations over columns**. Renames are exactly tha
 
 Same workload — rename rules added one at a time. **CPU added per rule:**
 
+<table class="mt-4">
+<thead>
+<tr><th class="text-right">Rules added</th><th class="text-right">OTel Collector (OTLP)</th><th class="text-right">DFE (OTAP)</th></tr>
+</thead>
+<tbody>
 <v-click>
-
-| Rules added | OTel Collector (OTLP) | DFE (OTAP) |
-|---:|---:|---:|
-| +1 | **+3.75%** | **+0.07%** |
-| +2 | **+7.5%** | **+0.14%** |
-| +3 | **+11.25%** | **+0.21%** |
-
+<tr><td class="text-right">+1</td><td class="text-right"><strong>+3.75%</strong></td><td class="text-right"><strong>+0.07%</strong></td></tr>
 </v-click>
+<v-click>
+<tr><td class="text-right">+2</td><td class="text-right"><strong>+7.5%</strong></td><td class="text-right"><strong>+0.14%</strong></td></tr>
+</v-click>
+<v-click>
+<tr><td class="text-right">+3</td><td class="text-right"><strong>+11.25%</strong></td><td class="text-right"><strong>+0.21%</strong></td></tr>
+</v-click>
+</tbody>
+</table>
 
 <v-click>
 
@@ -494,7 +525,7 @@ One representation, from source through every hop to query.
 
 - The conversion tax is real, structural, and applies to **every** OTel component — SDKs, collectors, backends.
 - The fix is a **shared, columnar, language-neutral in-memory format**. Apache Arrow is the obvious candidate.
-- OTel Arrow is exploring exactly this. Early results: **~20× on the wire, near-free transforms** on the Arrow-native runtime.
+- OTel Arrow is exploring exactly this. Early results: **~20× throughput, near-free transforms** on the Arrow-native runtime.
 - It's **early** — incubation, not production. The interesting work is just starting.
 
 </v-clicks>
@@ -515,7 +546,6 @@ OTel Arrow is **work-in-progress** — early enough that your input shapes it.
 
 - **Telemetry backends**: consider adopting **OTAP as your native ingestion format**. It's early — you can help shape it before the patterns harden.
 - **Pipeline operators**: try the **OTAP path / Dataflow Engine** in a non-production setup and share feedback — real-world workloads are exactly what the project needs.
-- **Pipeline & engine builders**: try **Arrow as your in-memory representation**.
 - **Everyone else**: join the community — issues, design discussions, benchmarks all welcome.
 
 </v-clicks>

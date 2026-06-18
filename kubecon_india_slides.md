@@ -394,7 +394,7 @@ Both rows are the **same DFE**, on the **same cores**. Only the wire format diff
 
 <table class="mt-4">
 <thead>
-<tr><th class="text-left">Wire protocol</th><th class="text-right">Throughput @ 1 core</th></tr>
+<tr><th style="text-align: left">Wire protocol</th><th style="text-align: right">Throughput @ 1 core</th></tr>
 </thead>
 <tbody>
 <v-click>
@@ -423,7 +423,7 @@ Same workload — rename rules added one at a time. **CPU added per rule:**
 
 <table class="mt-4">
 <thead>
-<tr><th class="text-right">Rules added</th><th class="text-right">OTel Collector (OTLP)</th><th class="text-right">DFE (OTAP)</th></tr>
+<tr><th style="text-align: right">Rules added</th><th style="text-align: right">OTel Collector (OTLP)</th><th style="text-align: right">DFE (OTAP)</th></tr>
 </thead>
 <tbody>
 <v-click>
@@ -551,3 +551,7 @@ OTel Arrow is **work-in-progress** — early enough that your input shapes it.
 
 [github.com/open-telemetry/otel-arrow](https://github.com/open-telemetry/otel-arrow)  
 [CNCF Slack #otel-arrow](https://cloud-native.slack.com/archives/C02JADSFY8Y)
+
+<a href="https://www.linkedin.com/in/cijothomas" target="_blank">
+  <img src="./obssummit_assets/cijo-linkedin-qr.jpeg" class="h-64 mx-auto mt-4" alt="Scan to connect on LinkedIn" />
+</a>

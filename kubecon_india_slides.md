@@ -20,7 +20,7 @@ presenter: true
 **Cijo Thomas** · Microsoft
 
 - Maintainer, OTel Rust
-- Approver - OTel Specification, OTel .NET and OTel Arrow
+- Approver — OTel Specification, OTel .NET and OTel Arrow
 
 ---
 
@@ -118,19 +118,9 @@ So the actual rename cost is **negligible**.
 
 ---
 
-# So Why Do Real Pipelines Burn So Much CPU?
-
-Some cost is unavoidable — real pipelines move bytes over the network and talk gRPC/HTTP. **We're not counting that.**
-
-<v-click>
-
-So where is the *rest* of the CPU going?
-
-</v-click>
-
----
-
 # Start With the Easiest Case: Passthrough
+
+Some cost is unavoidable — real pipelines move bytes over the network and talk gRPC/HTTP. **We're not counting that.** Where is the *rest* of the CPU going?
 
 A collector with **nothing in the middle** — OTLP in, OTLP out, zero processors.
 
@@ -175,10 +165,11 @@ Each new rule **stacks** on the same per-row, allocation-heavy path. Throughput 
 
 </v-click>
 
-<!--
-Speaker note: I've got the numbers — we'll see them in a few slides, after we look
-at what's actually happening structurally.
--->
+<v-click>
+
+We'll measure how much in a few slides — once we've seen *why* it stacks.
+
+</v-click>
 
 ---
 
@@ -199,6 +190,8 @@ Measured cost per log record:
 | **Rust** | 395 ns | 114 ns | **~510 ns** |
 | **Go** | 281 ns | 598 ns | **~887 ns** |
 | **.NET** (skips Conv 1) | — | — | **~194 ns** |
+
+_.NET emits the protobuf struct directly from the SDK — proof that Conv 1 is avoidable, not free._
 
 </v-click>
 
@@ -299,6 +292,12 @@ The combination is what kills all three costs at once: no conversion at the boun
 
 <img src="./obssummit_assets/otlp-bytes.svg" class="h-96 mx-auto" />
 
+<div class="text-center text-sm opacity-75 mt-2">
+
+_Nested protobuf — opaque until decoded, walked one record at a time._
+
+</div>
+
 <!--
 Speaker notes:
 - Here's what one OTLP batch actually looks like on the wire: a packed protobuf
@@ -316,6 +315,12 @@ Speaker notes:
 # OTAP: OpenTelemetry Protocol with Apache Arrow
 
 <img src="./obssummit_assets/otap-tables.svg" class="h-96 mx-auto" />
+
+<div class="text-center text-sm opacity-75 mt-2">
+
+_Same data — columnar tables. Wire layout == memory layout._
+
+</div>
 
 <!--
 Speaker notes:
@@ -386,11 +391,7 @@ _(The OTAP run is load-generator-limited — real ceiling is higher.)_
 
 # Each Rule Costs the Collector. DFE Barely Notices.
 
-Same workload — rename rules added one at a time:
-
-<!--
-Speaker note: Here's the data I promised earlier.
--->
+Same workload — rename rules added one at a time. Watch the **per-added-op** row:
 
 <v-click>
 
@@ -409,7 +410,14 @@ DFE operates on **columns** — adding rules is nearly free.
 
 </v-click>
 
-_(200K logs/s, ~300 B/log)_
+_(200K logs/s, ~300 B/log. DFE absolute baseline is ~6% at this load; the story is the per-rule delta.)_
+
+<!--
+Speaker note: Here's the data I promised earlier. Don't get hung up on Collector
+starting at 81% vs DFE at 6% — different runtimes, different absolute baselines.
+The honest comparison is the bottom row: each added rule costs the Collector
+~3.75% and DFE essentially nothing.
+-->
 
 ---
 
@@ -462,6 +470,12 @@ Deep dive: [OTel-Arrow Phase 2 blog](https://opentelemetry.io/blog/2026/otel-arr
 - It's **early** — incubation, not production. The interesting work is just starting.
 
 </v-clicks>
+
+<v-click>
+
+_Like a currency conversion fee: invisible per transaction, painful at scale — and worth removing._
+
+</v-click>
 
 ---
 
